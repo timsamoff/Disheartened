@@ -101,6 +101,16 @@ public class EnemyMovement : MonoBehaviour
         }
     }
 
+    private void FixedUpdate()
+    {
+        if (isJumping)
+        {
+            // **Ensure the enemy continues moving forward mid-air**
+            rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
+        }
+    }
+
+
     private bool PlayerInSight()
     {
         if (player == null) return false;
@@ -133,52 +143,72 @@ public class EnemyMovement : MonoBehaviour
     private void ChasePlayer()
     {
         if (isFlipping || isJumping) return;
-        if (!IsGrounded()) return; // Prevent movement in air
+        if (!IsGrounded()) return;
 
         float heightDifference = player.position.y - transform.position.y;
         float horizontalDistance = Mathf.Abs(player.position.x - transform.position.x);
 
-        // **If the player is directly above within a small X-range, stay still**
+        // **Stop moving if the player is directly above**
         if (horizontalDistance < 0.5f && heightDifference > tileHeight * 1.5f)
         {
-            rb.linearVelocity = Vector2.zero; // Stop movement
+            rb.linearVelocity = Vector2.zero;
             Debug.Log("Enemy is waiting because the player is directly above.");
             return;
         }
 
-        // **Otherwise, chase normally**
+        // Normal chase behavior
         direction = player.position.x > transform.position.x ? 1 : -1;
         transform.localScale = new Vector3(direction, 1, 1);
 
-        // **Ensure enemy MOVES first before considering jumps**
         rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
 
-        Debug.Log($"Chasing Player | InsideWallNull: {insideWallNull}");
-
-        // **If inside a WallNull, immediately attempt to jump**
-        if (insideWallNull && IsGrounded() && !hasJumped)
+        // **Only jump if an obstacle is detected ahead**
+        if (IsGrounded() && ShouldJump())
         {
-            if (CanJumpUp())
-            {
-                Debug.Log("Enemy is inside WallNull and will now jump.");
-                JumpUpStairs();
-                return;
-            }
+            Jump();
         }
     }
 
+    private void Jump()
+    {
+        if (!IsGrounded() || hasJumped) return;
+
+        isJumping = true;
+        hasJumped = true;
+
+        float jumpForce = Random.Range(tileHeight * minJumpHeight, tileHeight * maxJumpHeight); // Jump between min and max tiles
+        float forwardForce = movementData.runMaxSpeed * 0.8f;
+
+        // **Reset Y velocity before jumping to prevent compounding jumps**
+        rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0);
+
+        // **Start jump arc coroutine**
+        StartCoroutine(ApplyJumpArc(forwardForce, jumpForce));
+    }
+
+    
+
     private void Patrol()
     {
-        if (isFlipping) return; // If flipping, stop movement
+        if (isFlipping) return;
 
         bool atWall = IsAtWall();
         bool atEdge = IsAtEdge();
+        bool narrowSpace = IsInNarrowSpace();
 
         float targetSpeed = movementData.runMaxSpeed / 2;
 
         if (IsNearEdge() && !isChasing)
         {
             targetSpeed *= slowdownFactor; // Slow down near edges
+        }
+
+        // **If stuck in a narrow space, keep moving in the same direction**
+        if (narrowSpace)
+        {
+            Debug.Log("Enemy is in a narrow space, continuing movement.");
+            rb.linearVelocity = new Vector2(direction * targetSpeed, rb.linearVelocity.y);
+            return;
         }
 
         if ((atWall || atEdge) && IsGrounded() && Time.time > lastFlipTime + flipCooldown)
@@ -191,44 +221,49 @@ public class EnemyMovement : MonoBehaviour
         rb.linearVelocity = new Vector2(newSpeed, rb.linearVelocity.y);
     }
 
-    private bool CanJumpUp()
+    private bool IsInNarrowSpace()
     {
-        if (!insideWallNull) return false; // Only check WallNull
-        if (jumpAttempted) return false;   // Prevent repeated jumps
+        Vector2 leftCheck = transform.position + Vector3.left * 1f;
+        Vector2 rightCheck = transform.position + Vector3.right * 1f;
 
-        Debug.Log("Enemy is inside WallNull and will attempt to jump.");
-        jumpAttempted = true;
-        return true;
+        bool leftWall = Physics2D.Raycast(leftCheck, Vector2.left, 1f, groundLayer);
+        bool rightWall = Physics2D.Raycast(rightCheck, Vector2.right, 1f, groundLayer);
+
+        Debug.DrawRay(leftCheck, Vector2.left * 1f, Color.yellow);
+        Debug.DrawRay(rightCheck, Vector2.right * 1f, Color.yellow);
+
+        // **If both left and right walls exist within 2 tiles, it's a narrow space**
+        return leftWall && rightWall;
     }
 
-    private IEnumerator EndJump()
+    private bool ShouldJump()
     {
-        yield return new WaitUntil(() => IsGrounded());
-        isJumping = false;
-        hasJumped = false;
-        jumpAttempted = false; // Reset this so the enemy can jump again
-        anim.justLanded = true;
-        Debug.Log("Enemy landed. Jump reset.");
+        float maxJumpTile = tileHeight * 3f; // Jump up to 3 tiles high
+
+        Vector2 forwardCheckPos = transform.position + new Vector3(direction * 0.6f, 0, 0);
+        Vector2 upCheckPos = transform.position + new Vector3(direction * 0.6f, maxJumpTile, 0); // Check up to 3 tiles high
+
+        bool isObstacleAhead = Physics2D.Raycast(forwardCheckPos, Vector2.right * direction, 0.6f, groundLayer);
+        bool isSpaceAbove = !Physics2D.Raycast(upCheckPos, Vector2.up, maxJumpTile, groundLayer); // Ensure space to jump
+
+        Debug.DrawRay(forwardCheckPos, Vector2.right * 0.6f * direction, Color.red);
+        Debug.DrawRay(upCheckPos, Vector2.up * maxJumpTile, Color.green);
+
+        // **Jump only if an obstacle is ahead and not too high**
+        return (isObstacleAhead && isSpaceAbove && !TooHighToJump()) || insideWallNull;
     }
 
-
-    private void JumpUpStairs()
+    // **Updated Method: Checks if an obstacle is taller than 3 tiles**
+    private bool TooHighToJump()
     {
-        if (!IsGrounded() || hasJumped) return;
+        float maxJumpTile = tileHeight * 3f;
 
-        isJumping = true;
-        hasJumped = true;
+        Vector2 checkPosition = transform.position + new Vector3(direction * 0.6f, maxJumpTile, 0);
+        bool isTooHigh = Physics2D.Raycast(checkPosition, Vector2.up, maxJumpTile, groundLayer);
 
-        // Get enemy's height from its collider
-        float enemyHeight = GetComponent<Collider2D>().bounds.size.y;
+        Debug.DrawRay(checkPosition, Vector2.up * maxJumpTile, Color.blue);
 
-        // Randomized jump force between 1x and 3x the enemy's height
-        float jumpForce = Random.Range(enemyHeight * minJumpHeight, enemyHeight * maxJumpHeight);
-
-        float forwardForce = movementData.runMaxSpeed * 0.8f;
-
-        anim.startedJumping = true;
-        StartCoroutine(ApplyJumpArc(forwardForce, jumpForce));
+        return isTooHigh;
     }
 
     private IEnumerator ApplyJumpArc(float forwardForce, float jumpForce)
@@ -240,10 +275,10 @@ public class EnemyMovement : MonoBehaviour
         {
             float t = elapsedTime / jumpDuration;
 
-            // Vertical force starts strong, then gradually reduces (simulating gravity)
+            // **Vertical force starts strong, then gradually reduces (simulating gravity)**
             float currentJumpForce = jumpForce * (1 - t);
 
-            // Forward force starts low and gradually increases for a more natural arc
+            // **Forward force starts low and gradually increases for a more natural arc**
             float currentForwardForce = forwardForce * Mathf.Sqrt(t);
 
             rb.linearVelocity = new Vector2(direction * currentForwardForce, currentJumpForce);
@@ -281,12 +316,6 @@ public class EnemyMovement : MonoBehaviour
             return false;
 
         return solidWallHit.collider != null || (wallNullHit.collider != null && wallNullHit.collider.CompareTag("WallNull"));
-    }
-
-    private bool IsPlayerBlockingPath()
-    {
-        RaycastHit2D hit = Physics2D.Raycast(transform.position, Vector2.right * direction, 1f, LayerMask.GetMask("Player"));
-        return hit.collider != null;
     }
 
     private void OnTriggerEnter2D(Collider2D other)
