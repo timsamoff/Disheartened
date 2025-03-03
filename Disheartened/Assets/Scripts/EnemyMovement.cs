@@ -30,13 +30,11 @@ public class EnemyMovement : MonoBehaviour
 
     [Header("Jump Settings")]
     [SerializeField] private float maxJumpCheckDistance = 1.5f; // Max distance to check for jumpable tiles
+    [SerializeField] private float minJumpTiles = 1f; // Min tile height to attempt to jump
+    [SerializeField] private float maxJumpTiles = 3f; // Max tile height to attempt to jump
     [SerializeField] private float minJumpHeight = 5f; // Minimum jump height
     [SerializeField] private float maxJumpHeight = 8f; // Maximum jump height
     [SerializeField] private float maxGapJumpDistance = 4f; // Max tiles the enemy can jump across
-
-    private bool insideWallNull = false; // Tracks if the enemy is inside a WallNull
-    private bool jumpAttempted = false; // Prevents repeated jumps
-
 
     [Header("Testing")]
     [SerializeField] private bool showGizmos = true;
@@ -105,11 +103,65 @@ public class EnemyMovement : MonoBehaviour
     {
         if (isJumping)
         {
-            // **Ensure the enemy continues moving forward mid-air**
+            // **Ensure forward movement mid-air**
             rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
+        }
+        else if (!isChasing)
+        {
+            Patrol();
         }
     }
 
+    private void Patrol()
+    {
+        if (isFlipping) return; // Don't move while flipping
+
+        bool atWall = IsAtWall();
+        bool atEdge = IsAtEdge();
+        bool narrowSpace = IsInNarrowSpace();
+
+        float targetSpeed = movementData.runMaxSpeed / 2; // Default patrol speed
+
+        // **Start slowing down when approaching a wall**
+        if (IsNearEdge() && !isChasing)
+        {
+            targetSpeed *= slowdownFactor; // Reduce speed smoothly before stopping
+        }
+
+        // **Ensure enemy keeps moving if it's in a narrow space**
+        if (narrowSpace)
+        {
+            Debug.Log("Enemy is in a narrow space, continuing movement.");
+            rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
+            return;
+        }
+
+        // **Flip direction if at a wall or edge, using cooldown timers**
+        if ((atWall || atEdge) && IsGrounded() && Time.time > lastFlipTime + flipCooldown)
+        {
+            StartCoroutine(FlipWithPause());
+            lastFlipTime = Time.time;
+
+            // **Reset speed so it smoothly eases into movement**
+            rb.linearVelocity = new Vector2(0, rb.linearVelocity.y);
+        }
+
+        // **Ease into slowing down near obstacles**
+        float newSpeed = Mathf.Lerp(rb.linearVelocity.x, direction * targetSpeed, Time.deltaTime * easingSpeed);
+        rb.linearVelocity = new Vector2(newSpeed, rb.linearVelocity.y);
+    }
+
+    private IEnumerator FlipWithPause()
+    {
+        isFlipping = true;
+        direction *= -1;
+        transform.localScale = new Vector3(direction, 1, 1);
+        rb.linearVelocity = Vector2.zero;
+
+        yield return new WaitForSeconds(flipPauseTime);
+
+        isFlipping = false;
+    }
 
     private bool PlayerInSight()
     {
@@ -148,7 +200,29 @@ public class EnemyMovement : MonoBehaviour
         float heightDifference = player.position.y - transform.position.y;
         float horizontalDistance = Mathf.Abs(player.position.x - transform.position.x);
 
-        // **Stop moving if the player is directly above**
+        // **Check if the player is above and blocked by obstacles**
+        RaycastHit2D verticalCheck = Physics2D.Raycast(transform.position, Vector2.up, heightDifference, obstacleLayer);
+        bool isPlayerAboveAndBlocked = verticalCheck.collider != null && !verticalCheck.collider.CompareTag("Player");
+
+        if (isPlayerAboveAndBlocked)
+        {
+            Debug.Log("Player is above but blocked. Searching for path...");
+
+            // Move towards player's last known X position
+            direction = player.position.x > transform.position.x ? 1 : -1;
+            transform.localScale = new Vector3(direction, 1, 1);
+            rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
+
+            // **Attempt jumping if at a wall**
+            if (IsAtWall() && IsGrounded())
+            {
+                Jump();
+            }
+
+            return; // Exit early since the enemy is now pathfinding
+        }
+
+        // **Stop moving if the player is directly above and reachable**
         if (horizontalDistance < 0.5f && heightDifference > tileHeight * 1.5f)
         {
             rb.linearVelocity = Vector2.zero;
@@ -156,17 +230,21 @@ public class EnemyMovement : MonoBehaviour
             return;
         }
 
-        // Normal chase behavior
+        // **Standard chase behavior when no obstacles are blocking the enemy**
         direction = player.position.x > transform.position.x ? 1 : -1;
         transform.localScale = new Vector3(direction, 1, 1);
-
         rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
 
-        // **Only jump if an obstacle is detected ahead**
+        // **Use ShouldJump() to determine if a jump is needed**
         if (IsGrounded() && ShouldJump())
         {
             Jump();
         }
+    }
+
+    private bool ShouldJump()
+    {
+        return IsAtWall() || IsAtEdge();
     }
 
     private void Jump()
@@ -176,94 +254,15 @@ public class EnemyMovement : MonoBehaviour
         isJumping = true;
         hasJumped = true;
 
-        float jumpForce = Random.Range(tileHeight * minJumpHeight, tileHeight * maxJumpHeight); // Jump between min and max tiles
+        // Use minJumpHeight and maxJumpHeight instead of tile-based height calculations
+        float jumpForce = Random.Range(minJumpHeight, maxJumpHeight);
         float forwardForce = movementData.runMaxSpeed * 0.8f;
 
         // **Reset Y velocity before jumping to prevent compounding jumps**
         rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0);
 
-        // **Start jump arc coroutine**
         StartCoroutine(ApplyJumpArc(forwardForce, jumpForce));
-    }
-
-    
-
-    private void Patrol()
-    {
-        if (isFlipping) return;
-
-        bool atWall = IsAtWall();
-        bool atEdge = IsAtEdge();
-        bool narrowSpace = IsInNarrowSpace();
-
-        float targetSpeed = movementData.runMaxSpeed / 2;
-
-        if (IsNearEdge() && !isChasing)
-        {
-            targetSpeed *= slowdownFactor; // Slow down near edges
-        }
-
-        // **If stuck in a narrow space, keep moving in the same direction**
-        if (narrowSpace)
-        {
-            Debug.Log("Enemy is in a narrow space, continuing movement.");
-            rb.linearVelocity = new Vector2(direction * targetSpeed, rb.linearVelocity.y);
-            return;
-        }
-
-        if ((atWall || atEdge) && IsGrounded() && Time.time > lastFlipTime + flipCooldown)
-        {
-            StartCoroutine(FlipWithPause());
-            lastFlipTime = Time.time;
-        }
-
-        float newSpeed = Mathf.Lerp(rb.linearVelocity.x, direction * targetSpeed, Time.deltaTime * easingSpeed);
-        rb.linearVelocity = new Vector2(newSpeed, rb.linearVelocity.y);
-    }
-
-    private bool IsInNarrowSpace()
-    {
-        Vector2 leftCheck = transform.position + Vector3.left * 1f;
-        Vector2 rightCheck = transform.position + Vector3.right * 1f;
-
-        bool leftWall = Physics2D.Raycast(leftCheck, Vector2.left, 1f, groundLayer);
-        bool rightWall = Physics2D.Raycast(rightCheck, Vector2.right, 1f, groundLayer);
-
-        Debug.DrawRay(leftCheck, Vector2.left * 1f, Color.yellow);
-        Debug.DrawRay(rightCheck, Vector2.right * 1f, Color.yellow);
-
-        // **If both left and right walls exist within 2 tiles, it's a narrow space**
-        return leftWall && rightWall;
-    }
-
-    private bool ShouldJump()
-    {
-        float maxJumpTile = tileHeight * 3f; // Jump up to 3 tiles high
-
-        Vector2 forwardCheckPos = transform.position + new Vector3(direction * 0.6f, 0, 0);
-        Vector2 upCheckPos = transform.position + new Vector3(direction * 0.6f, maxJumpTile, 0); // Check up to 3 tiles high
-
-        bool isObstacleAhead = Physics2D.Raycast(forwardCheckPos, Vector2.right * direction, 0.6f, groundLayer);
-        bool isSpaceAbove = !Physics2D.Raycast(upCheckPos, Vector2.up, maxJumpTile, groundLayer); // Ensure space to jump
-
-        Debug.DrawRay(forwardCheckPos, Vector2.right * 0.6f * direction, Color.red);
-        Debug.DrawRay(upCheckPos, Vector2.up * maxJumpTile, Color.green);
-
-        // **Jump only if an obstacle is ahead and not too high**
-        return (isObstacleAhead && isSpaceAbove && !TooHighToJump()) || insideWallNull;
-    }
-
-    // **Updated Method: Checks if an obstacle is taller than 3 tiles**
-    private bool TooHighToJump()
-    {
-        float maxJumpTile = tileHeight * 3f;
-
-        Vector2 checkPosition = transform.position + new Vector3(direction * 0.6f, maxJumpTile, 0);
-        bool isTooHigh = Physics2D.Raycast(checkPosition, Vector2.up, maxJumpTile, groundLayer);
-
-        Debug.DrawRay(checkPosition, Vector2.up * maxJumpTile, Color.blue);
-
-        return isTooHigh;
+        StartCoroutine(ResetJumpAfterLanding()); // Reset so another jump can occur
     }
 
     private IEnumerator ApplyJumpArc(float forwardForce, float jumpForce)
@@ -278,10 +277,10 @@ public class EnemyMovement : MonoBehaviour
             // **Vertical force starts strong, then gradually reduces (simulating gravity)**
             float currentJumpForce = jumpForce * (1 - t);
 
-            // **Forward force starts low and gradually increases for a more natural arc**
-            float currentForwardForce = forwardForce * Mathf.Sqrt(t);
+            // **Ensure forward force applies correctly for both left and right movement**
+            float currentForwardForce = Mathf.Lerp(0, forwardForce, Mathf.Sqrt(t)) * direction;
 
-            rb.linearVelocity = new Vector2(direction * currentForwardForce, currentJumpForce);
+            rb.linearVelocity = new Vector2(currentForwardForce, currentJumpForce);
 
             elapsedTime += Time.deltaTime;
             yield return null;
@@ -290,16 +289,26 @@ public class EnemyMovement : MonoBehaviour
         isJumping = false;
     }
 
-    private IEnumerator FlipWithPause()
+    private IEnumerator ResetJumpAfterLanding()
     {
-        isFlipping = true;
-        direction *= -1;
-        transform.localScale = new Vector3(direction, 1, 1);
-        rb.linearVelocity = Vector2.zero;
+        yield return new WaitUntil(() => IsGrounded());
+        hasJumped = false; // Allow another jump
+    }
 
-        yield return new WaitForSeconds(flipPauseTime);
 
-        isFlipping = false;
+    private bool IsInNarrowSpace()
+    {
+        Vector2 leftCheck = transform.position + Vector3.left * tileHeight;
+        Vector2 rightCheck = transform.position + Vector3.right * tileHeight;
+
+        bool leftGround = Physics2D.Raycast(leftCheck, Vector2.down, checkDistance, groundLayer);
+        bool rightGround = Physics2D.Raycast(rightCheck, Vector2.down, checkDistance, groundLayer);
+
+        Debug.DrawRay(leftCheck, Vector2.down * checkDistance, Color.yellow);
+        Debug.DrawRay(rightCheck, Vector2.down * checkDistance, Color.yellow);
+
+        // **If only one side has ground, it's too narrow**
+        return leftGround != rightGround;
     }
 
     private bool IsGrounded() => Physics2D.Raycast(groundCheck.position, Vector2.down, checkDistance, groundLayer);
@@ -316,26 +325,6 @@ public class EnemyMovement : MonoBehaviour
             return false;
 
         return solidWallHit.collider != null || (wallNullHit.collider != null && wallNullHit.collider.CompareTag("WallNull"));
-    }
-
-    private void OnTriggerEnter2D(Collider2D other)
-    {
-        if (other.CompareTag("WallNull"))
-        {
-            insideWallNull = true;
-            jumpAttempted = false; // Reset when entering a new WallNull
-            Debug.Log("Enemy entered WallNull. Jump is now allowed.");
-        }
-    }
-
-    private void OnTriggerExit2D(Collider2D other)
-    {
-        if (other.CompareTag("WallNull"))
-        {
-            insideWallNull = false;
-            jumpAttempted = false; // Reset when exiting a WallNull
-            Debug.Log("Enemy exited WallNull. Jump is now disabled.");
-        }
     }
 
     private bool IsAtEdge() => !Physics2D.Raycast(groundCheck.position + (Vector3.right * direction * 0.3f), Vector2.down, checkDistance, groundLayer);
