@@ -204,6 +204,7 @@ public class EnemyMovement : MonoBehaviour
         RaycastHit2D verticalCheck = Physics2D.Raycast(transform.position, Vector2.up, heightDifference, obstacleLayer);
         bool isPlayerAboveAndBlocked = verticalCheck.collider != null && !verticalCheck.collider.CompareTag("Player");
 
+        // **Handle the case when the enemy is above the player and blocked by obstacles**
         if (isPlayerAboveAndBlocked)
         {
             Debug.Log("Player is above but blocked. Searching for path...");
@@ -222,11 +223,11 @@ public class EnemyMovement : MonoBehaviour
             return; // Exit early since the enemy is now pathfinding
         }
 
-        // **Stop moving if the player is directly above and reachable**
-        if (horizontalDistance < 0.5f && heightDifference > tileHeight * 1.5f)
+        // **Stop moving if the player is directly above and reachable (applied to both above and below conditions)**
+        if (horizontalDistance < 0.5f && Mathf.Abs(heightDifference) > tileHeight * 1.5f)
         {
             rb.linearVelocity = Vector2.zero;
-            Debug.Log("Enemy is waiting because the player is directly above.");
+            Debug.Log("Enemy is waiting because the player is directly above or below.");
             return;
         }
 
