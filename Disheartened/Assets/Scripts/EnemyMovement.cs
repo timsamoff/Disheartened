@@ -78,10 +78,14 @@ public class EnemyMovement : MonoBehaviour
 
         if (PlayerInSight()) // If player is in range, start chasing
         {
-            isChasing = true;
-            lastSeenTime = Time.time;
+            if (!isChasing) // Start chase mode if not already chasing
+            {
+                isChasing = true;
+                Debug.Log("Enemy spotted the player! Starting chase.");
+            }
+            lastSeenTime = Time.time; // Reset the timer when the player is in range
         }
-        else if (isChasing && Time.time > lastSeenTime + stopChasingTimer) // Player left maxChaseRange
+        else if (isChasing && Time.time > lastSeenTime + stopChasingTimer) // Player out of range for too long
         {
             isChasing = false;
             Debug.Log("Enemy lost the player. Returning to patrol.");
@@ -101,17 +105,28 @@ public class EnemyMovement : MonoBehaviour
     {
         if (player == null) return false;
 
-        float distanceX = Mathf.Abs(player.position.x - transform.position.x);
-        float distanceY = Mathf.Abs(player.position.y - transform.position.y);
-
-        float maxDetectionX = isChasing ? maxChaseRange : detectionRangeX;
-
-        if (distanceX <= maxDetectionX && distanceY <= detectionRangeY)
+        // Use separate X and Y detection ranges in patrol mode, full spherical range in chase mode
+        if (!isChasing)
         {
-            RaycastHit2D hit = Physics2D.Raycast(transform.position, (player.position - transform.position).normalized, maxDetectionX, obstacleLayer);
+            float distanceX = Mathf.Abs(player.position.x - transform.position.x);
+            float distanceY = Mathf.Abs(player.position.y - transform.position.y);
 
-            return hit.collider == null || hit.collider.CompareTag("Player");
+            if (distanceX <= detectionRangeX && distanceY <= detectionRangeY)
+            {
+                RaycastHit2D hit = Physics2D.Raycast(transform.position, (player.position - transform.position).normalized, detectionRangeX, obstacleLayer);
+                return hit.collider == null || hit.collider.CompareTag("Player");
+            }
         }
+        else
+        {
+            float distance = Vector2.Distance(transform.position, player.position); // Use full spherical range while chasing
+            if (distance <= maxChaseRange)
+            {
+                RaycastHit2D hit = Physics2D.Raycast(transform.position, (player.position - transform.position).normalized, maxChaseRange, obstacleLayer);
+                return hit.collider == null || hit.collider.CompareTag("Player");
+            }
+        }
+
         return false;
     }
 
@@ -138,46 +153,18 @@ public class EnemyMovement : MonoBehaviour
         // **Ensure enemy MOVES first before considering jumps**
         rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
 
-        // **Check if movement is actually blocked**
-        bool atWall = IsAtWall();
-        bool atGap = ShouldJumpGap();
-        bool canJump = CanJumpUp();
-        bool playerBlocking = IsPlayerBlockingPath();
+        Debug.Log($"Chasing Player | InsideWallNull: {insideWallNull}");
 
-        Debug.Log($"Chasing Player | Wall: {atWall}, Gap: {atGap}, CanJump: {canJump}, PlayerBlocking: {playerBlocking}");
-
-        // **1. If no obstacles, just move toward the player normally**
-        if (!atWall && !atGap)
+        // **If inside a WallNull, immediately attempt to jump**
+        if (insideWallNull && IsGrounded() && !hasJumped)
         {
-            return; // Don't check for jumps unless movement is blocked
-        }
-
-        // **2. If at a wall, try jumping ONLY IF necessary**
-        if (atWall && !playerBlocking && IsGrounded() && !hasJumped)
-        {
-            if (canJump)
+            if (CanJumpUp())
             {
+                Debug.Log("Enemy is inside WallNull and will now jump.");
                 JumpUpStairs();
                 return;
             }
-            else if (PlayerHasMovedBehind())
-            {
-                StartCoroutine(FlipWithPause()); // Flip instead of jumping
-                return;
-            }
         }
-
-        // **3. If at a gap, jump across**
-        if (atGap && !hasJumped)
-        {
-            JumpAcrossGap();
-        }
-    }
-
-    private bool PlayerHasMovedBehind()
-    {
-        return (direction == 1 && player.position.x < transform.position.x) ||
-               (direction == -1 && player.position.x > transform.position.x);
     }
 
     private void Patrol()
@@ -204,60 +191,26 @@ public class EnemyMovement : MonoBehaviour
         rb.linearVelocity = new Vector2(newSpeed, rb.linearVelocity.y);
     }
 
-    private bool ShouldJumpGap()
-    {
-        if (!isChasing) return false;
-
-        Vector2 checkPos = transform.position + new Vector3(direction * maxGapJumpDistance, 0, 0);
-        bool groundAhead = Physics2D.Raycast(checkPos, Vector2.down, tileHeight * 1.5f, groundLayer);
-
-        return !IsAtEdge() && groundAhead;
-    }
-
-
-    private void JumpAcrossGap()
-    {
-        isJumping = true;
-        hasJumped = true;
-
-        float jumpForce = Random.Range(minJumpHeight, maxJumpHeight);
-        float forwardForce = movementData.runMaxSpeed * 0.75f; // Reduce gap jumping distance
-
-        rb.linearVelocity = new Vector2(direction * forwardForce, jumpForce);
-        anim.startedJumping = true;
-
-        StartCoroutine(EndJump());
-    }
-
     private bool CanJumpUp()
     {
-        if (!isChasing || !insideWallNull || jumpAttempted) return false; // Only jump if inside a WallNull and hasn't jumped yet
+        if (!insideWallNull) return false; // Only check WallNull
+        if (jumpAttempted) return false;   // Prevent repeated jumps
 
-        Vector2 checkPosition = transform.position + new Vector3(direction * maxJumpCheckDistance, 0, 0);
-
-        // **Ensure there's no player blocking the jump**
-        RaycastHit2D playerHit = Physics2D.Raycast(transform.position, Vector2.right * direction, checkDistance, LayerMask.GetMask("Player"));
-
-        if (playerHit.collider != null)
-        {
-            Debug.Log("Player is blocking the jump! Aborting.");
-            return false;
-        }
-
-        Debug.Log("WallNull detected and player is NOT blocking! Enemy will jump.");
-
-        jumpAttempted = true; // Mark jump as attempted
+        Debug.Log("Enemy is inside WallNull and will attempt to jump.");
+        jumpAttempted = true;
         return true;
     }
 
     private IEnumerator EndJump()
     {
         yield return new WaitUntil(() => IsGrounded());
-
         isJumping = false;
         hasJumped = false;
+        jumpAttempted = false; // Reset this so the enemy can jump again
         anim.justLanded = true;
+        Debug.Log("Enemy landed. Jump reset.");
     }
+
 
     private void JumpUpStairs()
     {
@@ -266,8 +219,13 @@ public class EnemyMovement : MonoBehaviour
         isJumping = true;
         hasJumped = true;
 
-        float jumpForce = Random.Range(minJumpHeight, maxJumpHeight);
-        float forwardForce = movementData.runMaxSpeed; // * 0.5f; // Reduce horizontal movement
+        // Get enemy's height from its collider
+        float enemyHeight = GetComponent<Collider2D>().bounds.size.y;
+
+        // Randomized jump force between 1x and 3x the enemy's height
+        float jumpForce = Random.Range(enemyHeight * minJumpHeight, enemyHeight * maxJumpHeight);
+
+        float forwardForce = movementData.runMaxSpeed * 0.8f;
 
         anim.startedJumping = true;
         StartCoroutine(ApplyJumpArc(forwardForce, jumpForce));
@@ -313,22 +271,16 @@ public class EnemyMovement : MonoBehaviour
 
     private bool IsAtWall()
     {
-        if (!IsGrounded()) return false; // Ignore walls while falling
+        if (!IsGrounded()) return false;
 
-        // Check for a solid wall on the Ground layer (for patrolling)
         RaycastHit2D solidWallHit = Physics2D.Raycast(wallCheck.position, Vector2.right * direction, checkDistance, groundLayer);
-
-        // Check for a "WallNull" trigger collider (for jumping logic)
         RaycastHit2D wallNullHit = Physics2D.Raycast(wallCheck.position, Vector2.right * direction, checkDistance);
 
-        bool detectedWall = solidWallHit.collider != null || (wallNullHit.collider != null && wallNullHit.collider.CompareTag("WallNull"));
+        // Ensure the player is not blocking path
+        if (solidWallHit.collider != null && solidWallHit.collider.CompareTag("Player"))
+            return false;
 
-        if (detectedWall)
-        {
-            Debug.Log("Wall detected: " + (solidWallHit.collider != null ? "Ground" : "WallNull"));
-        }
-
-        return detectedWall;
+        return solidWallHit.collider != null || (wallNullHit.collider != null && wallNullHit.collider.CompareTag("WallNull"));
     }
 
     private bool IsPlayerBlockingPath()
