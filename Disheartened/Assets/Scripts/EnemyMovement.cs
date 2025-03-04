@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections;
+using System.Collections.Generic;
 
 public class EnemyMovement : MonoBehaviour
 {
@@ -91,7 +92,7 @@ public class EnemyMovement : MonoBehaviour
 
         if (isChasing)
         {
-            ChasePlayer();
+            ChaseTrail();
         }
         else
         {
@@ -192,25 +193,29 @@ public class EnemyMovement : MonoBehaviour
         return false;
     }
 
-    private void ChasePlayer()
+    private void ChaseTrail()
     {
         if (isFlipping || isJumping) return;
         if (!IsGrounded()) return;
 
-        float heightDifference = player.position.y - transform.position.y;
-        float horizontalDistance = Mathf.Abs(player.position.x - transform.position.x);
+        Vector3? targetNode = GetNearestTrailNode();
+        if (targetNode == null) return;
 
-        // **Check if the player is above and blocked by obstacles**
+        Vector3 targetPosition = targetNode.Value;
+        float heightDifference = targetPosition.y - transform.position.y;
+        float horizontalDistance = Mathf.Abs(targetPosition.x - transform.position.x);
+
+        // **Check if the target node is above and blocked by obstacles**
         RaycastHit2D verticalCheck = Physics2D.Raycast(transform.position, Vector2.up, heightDifference, obstacleLayer);
-        bool isPlayerAboveAndBlocked = verticalCheck.collider != null && !verticalCheck.collider.CompareTag("Player");
+        bool isNodeAboveAndBlocked = verticalCheck.collider != null && !verticalCheck.collider.CompareTag("Player");
 
-        // **Handle the case when the enemy is above the player and blocked by obstacles**
-        if (isPlayerAboveAndBlocked)
+        // **Handle the case when the enemy is above the target node and blocked by obstacles**
+        if (isNodeAboveAndBlocked)
         {
-            Debug.Log("Player is above but blocked. Searching for path...");
+            Debug.Log("Target node is above but blocked. Searching for path...");
 
-            // Move towards player's last known X position
-            direction = player.position.x > transform.position.x ? 1 : -1;
+            // Move towards target node's last known X position
+            direction = targetPosition.x > transform.position.x ? 1 : -1;
             transform.localScale = new Vector3(direction, 1, 1);
             rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
 
@@ -223,16 +228,16 @@ public class EnemyMovement : MonoBehaviour
             return; // Exit early since the enemy is now pathfinding
         }
 
-        // **Stop moving if the player is directly above and reachable (applied to both above and below conditions)**
+        // **Stop moving if the target node is directly above and reachable (applied to both above and below conditions)**
         if (horizontalDistance < 0.5f && Mathf.Abs(heightDifference) > tileHeight * 1.5f)
         {
             rb.linearVelocity = Vector2.zero;
-            Debug.Log("Enemy is waiting because the player is directly above or below.");
+            Debug.Log("Enemy is waiting because the target node is directly above or below.");
             return;
         }
 
         // **Standard chase behavior when no obstacles are blocking the enemy**
-        direction = player.position.x > transform.position.x ? 1 : -1;
+        direction = targetPosition.x > transform.position.x ? 1 : -1;
         transform.localScale = new Vector3(direction, 1, 1);
         rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
 
@@ -241,6 +246,31 @@ public class EnemyMovement : MonoBehaviour
         {
             Jump();
         }
+    }
+
+    private Vector3? GetNearestTrailNode()
+    {
+        if (PlayerTrail.trailPositions == null || PlayerTrail.trailPositions.Count == 0) return null;
+
+        Vector3 nearestNode = PlayerTrail.trailPositions[0];
+        float minDistance = Vector3.Distance(transform.position, nearestNode);
+
+        foreach (var node in PlayerTrail.trailPositions)
+        {
+            // Only consider nodes that are in the direction of the player
+            if ((player.position.x > transform.position.x && node.x > transform.position.x) ||
+                (player.position.x < transform.position.x && node.x < transform.position.x))
+            {
+                float distance = Vector3.Distance(transform.position, node);
+                if (distance < minDistance)
+                {
+                    nearestNode = node;
+                    minDistance = distance;
+                }
+            }
+        }
+
+        return nearestNode;
     }
 
     private bool ShouldJump()
@@ -295,7 +325,6 @@ public class EnemyMovement : MonoBehaviour
         yield return new WaitUntil(() => IsGrounded());
         hasJumped = false; // Allow another jump
     }
-
 
     private bool IsInNarrowSpace()
     {
