@@ -194,83 +194,60 @@ public class EnemyMovement : MonoBehaviour
     }
 
     private void ChaseTrail()
+{
+    if (isFlipping || isJumping) return;  // Avoid jumping or flipping when these actions are in progress
+    if (!IsGrounded()) return;  // Don't jump if the enemy is not grounded
+
+    // Chase the player while checking the jump condition
+    Vector3 targetPosition = player.transform.position; // Chase the player directly
+    float heightDifference = targetPosition.y - transform.position.y;
+    float horizontalDistance = Mathf.Abs(targetPosition.x - transform.position.x);
+
+    // **Check if the enemy should jump**
+    if (IsGrounded() && ShouldJump()) 
     {
-        if (isFlipping || isJumping) return;
-        if (!IsGrounded()) return;
-
-        Vector3? targetNode = GetNearestTrailNode();
-        if (targetNode == null) return;
-
-        Vector3 targetPosition = targetNode.Value;
-        float heightDifference = targetPosition.y - transform.position.y;
-        float horizontalDistance = Mathf.Abs(targetPosition.x - transform.position.x);
-
-        // **Check if the target node is above and blocked by obstacles**
-        RaycastHit2D verticalCheck = Physics2D.Raycast(transform.position, Vector2.up, heightDifference, obstacleLayer);
-        bool isNodeAboveAndBlocked = verticalCheck.collider != null && !verticalCheck.collider.CompareTag("Player");
-
-        // **Handle the case when the enemy is above the target node and blocked by obstacles**
-        if (isNodeAboveAndBlocked)
-        {
-            Debug.Log("Target node is above but blocked. Searching for path...");
-
-            // Move towards target node's last known X position
-            direction = targetPosition.x > transform.position.x ? 1 : -1;
-            transform.localScale = new Vector3(direction, 1, 1);
-            rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
-
-            // **Attempt jumping if at a wall**
-            if (IsAtWall() && IsGrounded())
-            {
-                Jump();
-            }
-
-            return; // Exit early since the enemy is now pathfinding
-        }
-
-        // **Stop moving if the target node is directly above and reachable (applied to both above and below conditions)**
-        if (horizontalDistance < 0.5f && Mathf.Abs(heightDifference) > tileHeight * 1.5f)
-        {
-            rb.linearVelocity = Vector2.zero;
-            Debug.Log("Enemy is waiting because the target node is directly above or below.");
-            return;
-        }
-
-        // **Standard chase behavior when no obstacles are blocking the enemy**
-        direction = targetPosition.x > transform.position.x ? 1 : -1;
-        transform.localScale = new Vector3(direction, 1, 1);
-        rb.linearVelocity = new Vector2(direction * movementData.runMaxSpeed, rb.linearVelocity.y);
-
-        // **Use ShouldJump() to determine if a jump is needed**
-        if (IsGrounded() && ShouldJump())
-        {
-            Jump();
-        }
+        Jump(); // Jump if at a wall or edge (based on the ShouldJump() logic)
     }
 
-    private Vector3? GetNearestTrailNode()
+    // **Move toward the player**
+    direction = targetPosition.x > transform.position.x ? 1 : -1;
+    transform.localScale = new Vector3(direction, 1, 1);
+
+    // Move horizontally toward the player
+    float targetSpeed = movementData.runMaxSpeed;
+    rb.linearVelocity = new Vector2(direction * targetSpeed, rb.linearVelocity.y);
+}
+
+    private Vector3? GetBestTrailNode()
     {
-        if (PlayerTrail.trailPositions == null || PlayerTrail.trailPositions.Count == 0) return null;
+        if (PlayerTrail.instance == null) return null;
 
-        Vector3 nearestNode = PlayerTrail.trailPositions[0];
-        float minDistance = Vector3.Distance(transform.position, nearestNode);
+        List<Vector3> nodes = PlayerTrail.instance.GetTrailNodes();
+        if (nodes.Count == 0) return null;
 
-        foreach (var node in PlayerTrail.trailPositions)
+        Vector3 bestNode = Vector3.zero;
+        float bestDistance = float.MaxValue;
+
+        foreach (Vector3 node in nodes)
         {
-            // Only consider nodes that are in the direction of the player
-            if ((player.position.x > transform.position.x && node.x > transform.position.x) ||
-                (player.position.x < transform.position.x && node.x < transform.position.x))
+            float enemyToNodeDist = Vector2.Distance(transform.position, node);
+
+            // Ensure the node is ahead of the enemy in its current direction
+            if ((direction == 1 && node.x < transform.position.x) ||
+                (direction == -1 && node.x > transform.position.x))
             {
-                float distance = Vector3.Distance(transform.position, node);
-                if (distance < minDistance)
-                {
-                    nearestNode = node;
-                    minDistance = distance;
-                }
+                continue; // Ignore nodes behind the enemy
+            }
+
+            // Pick the closest valid node
+            if (enemyToNodeDist < bestDistance)
+            {
+                bestDistance = enemyToNodeDist;
+                bestNode = node;
             }
         }
 
-        return nearestNode;
+        return bestDistance < float.MaxValue ? bestNode : (Vector3?)null;
     }
 
     private bool ShouldJump()

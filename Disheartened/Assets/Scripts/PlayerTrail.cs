@@ -12,9 +12,20 @@ public class PlayerTrail : MonoBehaviour
     [Header("Debug Settings")]
     [SerializeField] private bool showGizmos = true;
 
-    public static List<Vector3> trailPositions = new List<Vector3>(); // Shared trail data
+    public static PlayerTrail instance; // Singleton access
+
+    private List<GameObject> trailNodes = new List<GameObject>(); // Store node objects
+    public List<Vector3> trailPositions = new List<Vector3>(); // Public for enemies
 
     private Vector3 lastNodePosition;
+
+    void Awake()
+    {
+        if (instance == null)
+            instance = this;
+        else
+            Destroy(gameObject);
+    }
 
     void Start()
     {
@@ -28,6 +39,8 @@ public class PlayerTrail : MonoBehaviour
             SpawnTrailNode();
             lastNodePosition = transform.position;
         }
+
+        Debug.Log("Trail size: " + trailPositions.Count);
     }
 
     void SpawnTrailNode()
@@ -35,25 +48,32 @@ public class PlayerTrail : MonoBehaviour
         GameObject node = Instantiate(trailNodePrefab, transform.position, Quaternion.identity);
         HideNode(node);
 
-        trailPositions.Add(transform.position); // Store position for enemies
+        trailNodes.Add(node);
+        trailPositions.Add(node.transform.position); // Track position for enemies
 
         // Remove node from list after a delay
-        StartCoroutine(RemoveTrailNode(transform.position, maxNodeLifetime));
+        StartCoroutine(RemoveTrailNode(node, maxNodeLifetime));
     }
 
     void HideNode(GameObject node)
     {
-        MeshRenderer meshRenderer = node.GetComponent<MeshRenderer>();
-        if (meshRenderer != null) meshRenderer.enabled = false;
+        if (node.TryGetComponent(out MeshRenderer meshRenderer))
+            meshRenderer.enabled = false;
 
-        SpriteRenderer spriteRenderer = node.GetComponent<SpriteRenderer>();
-        if (spriteRenderer != null) spriteRenderer.enabled = false;
+        if (node.TryGetComponent(out SpriteRenderer spriteRenderer))
+            spriteRenderer.enabled = false;
     }
 
-    IEnumerator RemoveTrailNode(Vector3 position, float delay)
+    IEnumerator RemoveTrailNode(GameObject node, float delay)
     {
         yield return new WaitForSeconds(delay);
-        trailPositions.Remove(position);
+
+        if (trailNodes.Contains(node))
+        {
+            trailPositions.Remove(node.transform.position);
+            trailNodes.Remove(node);
+            Destroy(node);
+        }
     }
 
     void OnDrawGizmos()
@@ -65,5 +85,11 @@ public class PlayerTrail : MonoBehaviour
         {
             Gizmos.DrawSphere(pos, 0.2f);
         }
+    }
+
+    // **Added method for retrieving trail nodes**
+    public List<Vector3> GetTrailNodes()
+    {
+        return new List<Vector3>(trailPositions);
     }
 }
