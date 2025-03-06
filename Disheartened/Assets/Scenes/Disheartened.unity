@@ -209,6 +209,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 6
       objectReference: {fileID: 0}
+    - target: {fileID: 3524144439434063362, guid: 74e5d7cbb9c95634baf3ac2fe9a7b9ba, type: 3}
+      propertyPath: m_GravityScale
+      value: 10
+      objectReference: {fileID: 0}
     - target: {fileID: 4009470981448170107, guid: 74e5d7cbb9c95634baf3ac2fe9a7b9ba, type: 3}
       propertyPath: m_SortingLayer
       value: 1
@@ -927,7 +931,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   trailNodePrefab: {fileID: 7801211411304243187, guid: 23964397753eca244a1e2fe68e8a2ae8, type: 3}
   nodeSpacing: 1
-  maxNodeLifetime: 10
+  maxNodeLifetime: 1
   showGizmos: 1
 --- !u!1 &1066085307
 GameObject:
@@ -1325,11 +1329,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2950285300649171657, guid: 9fe79cde5a8e35447afe507dd478fe96, type: 3}
       propertyPath: maxJumpHeight
-      value: 8
+      value: 15
       objectReference: {fileID: 0}
     - target: {fileID: 2950285300649171657, guid: 9fe79cde5a8e35447afe507dd478fe96, type: 3}
       propertyPath: minJumpHeight
-      value: 5
+      value: 8
       objectReference: {fileID: 0}
     - target: {fileID: 2950285300649171657, guid: 9fe79cde5a8e35447afe507dd478fe96, type: 3}
       propertyPath: detectionRange
