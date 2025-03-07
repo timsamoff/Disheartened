@@ -931,7 +931,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   trailNodePrefab: {fileID: 7801211411304243187, guid: 23964397753eca244a1e2fe68e8a2ae8, type: 3}
   nodeSpacing: 1
-  maxNodeLifetime: 1
+  maxNodeLifetime: 10
   showGizmos: 1
 --- !u!1 &1066085307
 GameObject:
